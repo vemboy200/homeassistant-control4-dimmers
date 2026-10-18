@@ -1,0 +1,152 @@
+rules:
+  # Bronze
+  action-setup:
+    status: todo
+    comment: >
+      Actions are registered in async_setup, but press_button,
+      send_raw_command, set_led, set_slot_led and push_config return
+      silently when the entry is not loaded instead of raising
+      ServiceValidationError like the other actions do.
+  appropriate-polling:
+    status: exempt
+    comment: The integration does not poll; all device state is pushed over MQTT.
+  brands: done
+  common-modules:
+    status: todo
+    comment: >
+      There is no entity.py base entity, so sensor.py and event.py each
+      build the same device_info.
+  config-flow-test-coverage: done
+  config-flow:
+    status: todo
+    comment: The MQTT base topic field has no data_description.
+  dependency-transparency: done
+  docs-actions: done
+  docs-conditions:
+    status: exempt
+    comment: The integration does not provide any conditions.
+  docs-high-level-description: done
+  docs-installation-instructions:
+    status: todo
+    comment: >
+      The README covers copying the files, but not installing through
+      HACS or adding the integration under Devices & services.
+  docs-removal-instructions: todo
+  docs-triggers:
+    status: exempt
+    comment: The integration does not provide any triggers.
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data:
+    status: todo
+    comment: The manager and store are kept in hass.data[DOMAIN].
+  test-before-configure:
+    status: todo
+    comment: >
+      The config flow does not check that MQTT is set up or that the
+      base topic has a Zigbee2MQTT bridge.
+  test-before-setup:
+    status: todo
+    comment: >
+      Setup does not wait for the MQTT client
+      (mqtt.async_wait_for_mqtt_client) or raise ConfigEntryNotReady.
+  unique-config-entry: done
+
+  # Silver
+  action-exceptions:
+    status: todo
+    comment: >
+      Most actions raise ServiceValidationError, but set_slot_led only
+      logs an error when the device has no stored config and the call
+      still reports success.
+  config-entry-unloading: done
+  docs-configuration-parameters:
+    status: exempt
+    comment: The integration has no options flow.
+  docs-installation-parameters:
+    status: todo
+    comment: The MQTT base topic asked for during setup is not documented.
+  entity-unavailable:
+    status: todo
+    comment: >
+      Entities stay available when Zigbee2MQTT reports a device offline;
+      the device sensor shows "disconnected" as its state instead.
+  integration-owner: done
+  log-when-unavailable: todo
+  parallel-updates: todo
+  reauthentication-flow:
+    status: exempt
+    comment: The integration has no authentication; it talks to the local MQTT broker.
+  test-coverage:
+    status: todo
+    comment: >
+      Coverage is around 76%. light.py is not a loaded platform and has
+      no tests.
+
+  # Gold
+  devices: done
+  diagnostics: todo
+  discovery-update-info:
+    status: exempt
+    comment: >
+      Devices are found through Zigbee2MQTT over MQTT; there is no network
+      address to keep up to date.
+  discovery:
+    status: todo
+    comment: >
+      Could use MQTT discovery on the Zigbee2MQTT bridge/devices topic and
+      abort when no Control4 devices are listed.
+  docs-data-update: done
+  docs-examples: done
+  docs-known-limitations: todo
+  docs-supported-devices: done
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases: done
+  dynamic-devices: done
+  entity-category:
+    status: todo
+    comment: The connected/disconnected device sensor could be a diagnostic entity.
+  entity-device-class:
+    status: todo
+    comment: The connected/disconnected device sensor could use the enum device class.
+  entity-disabled-by-default:
+    status: todo
+    comment: >
+      Every device gets an event entity for every slot plus the auxiliary
+      up/down events, even though most devices only use two buttons and
+      no auxiliary switch.
+  entity-translations:
+    status: todo
+    comment: >
+      "Ambient Light" and the default "Button N" event names are
+      hardcoded in English.
+  exception-translations: todo
+  icon-translations: todo
+  reconfiguration-flow:
+    status: todo
+    comment: The MQTT base topic cannot be changed without removing the integration.
+  repair-issues:
+    status: todo
+    comment: >
+      A repair issue could flag Control4 devices that never report a
+      device type, for example when Zigbee2MQTT is not running the
+      zigbee2mqtt-control4 image.
+  stale-devices:
+    status: todo
+    comment: >
+      Devices removed from Zigbee2MQTT are dropped by the manager but stay
+      in the device registry, and async_remove_config_entry_device is not
+      implemented.
+
+  # Platinum
+  async-dependency:
+    status: exempt
+    comment: >
+      The integration has no third-party dependency; it uses Home
+      Assistant's MQTT integration.
+  inject-websession:
+    status: exempt
+    comment: The integration does not make HTTP requests.
+  strict-typing: todo
