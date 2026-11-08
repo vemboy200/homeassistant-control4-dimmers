@@ -57,6 +57,9 @@ if TYPE_CHECKING:
 # back to back they overrun the Zigbee mesh and some are silently dropped
 # (issue #144). Pacing sends this far apart makes delivery reliable.
 MIN_SEND_INTERVAL = 0.05
+# Default hold-to-dim speed in percent per second (a native C4 hold ramps at
+# roughly 18%/s).
+HOLD_RAMP_PCT_PER_SECOND = 15
 
 # Read-after-write verification (issue #145). After a single-slot push we
 # read the slot's written parameters back and compare desired vs observed,
@@ -128,6 +131,8 @@ class Control4Manager:
         # Holds ramping a Zigbee2MQTT light with brightness_move, mapped to
         # the light's set topic so release can send the stop.
         self._moving: dict[tuple[str, int], str] = {}
+        # Last ramp direction (+1 / -1) per button, for toggle holds.
+        self._ramp_directions: dict[tuple[str, int], int] = {}
         # Every Zigbee2MQTT device's friendly name by IEEE, from bridge/devices,
         # so a hold can address a non-Control4 target light's topic.
         self._z2m_names: dict[str, str] = {}
@@ -373,14 +378,34 @@ class Control4Manager:
             or slot.behavior in ("load_on", "load_off", "toggle_load")
         ):
             return True
-        move = self._smooth_dim_move(slot.hold_action)
-        if move is None:
+        ramp = self._hold_ramp(key, slot.hold_action, new_hold=new_hold)
+        if ramp is None:
             self._hass.async_create_task(
                 self.press_button(device.ieee_address, slot_id, "hold"),
                 f"c4_hold_{device.ieee_address}_{slot_id}",
             )
+            return True
+        target, step = ramp
+        topic = self._z2m_set_topic(target)
+        if topic is None:
+            # Not a Zigbee2MQTT light: step it once per hold repeat instead.
+            self._hass.async_create_task(
+                self._hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": target, "brightness_step_pct": step, "transition": 1},
+                ),
+                f"c4_hold_step_{device.ieee_address}_{slot_id}",
+            )
         elif new_hold:
-            topic, payload = move
+            # One brightness_move per hold; the light ramps itself until the
+            # release sends the stop. Brightening also turns an off light on.
+            rate = max(1, round(abs(step) * 255 / 100))
+            payload = (
+                {"brightness_move_onoff": rate}
+                if step > 0
+                else {"brightness_move": -rate}
+            )
             self._moving[key] = topic
             self._hass.async_create_task(
                 mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1),
@@ -400,39 +425,43 @@ class Control4Manager:
                 f"c4_hold_stop_{key[0]}_{key[1]}",
             )
 
-    def _smooth_dim_move(self, action: dict) -> tuple[str, dict[str, int]] | None:
+    def _hold_ramp(
+        self, key: tuple[str, int], action: dict, *, new_hold: bool
+    ) -> tuple[str, float] | None:
         """
-        Turn a brightness-step hold action into a Zigbee2MQTT ramp, if possible.
+        Read a hold action as a dimming ramp: (target light, signed % per second).
 
-        A hold action of light.turn_on with brightness_step_pct, aimed at one
-        Zigbee2MQTT light, becomes a brightness_move at that many percent per
-        second: the light ramps itself (smooth, like holding a native dimmer)
-        until the release sends the stop. Brightening uses
-        brightness_move_onoff so an off light turns on. Returns the light's
-        set topic and the start payload, or None to repeat the action
-        instead.
+        light.turn_on brightens, light.turn_off dims, and light.toggle
+        alternates: it brightens an off light, otherwise it reverses this
+        button's last direction, starting with dim. Returns None for any
+        other action, which then simply repeats while held.
         """
-        if action.get("action") != "light.turn_on":
+        parsed = _parse_ramp_action(action)
+        if parsed is None:
             return None
-        step = (action.get("data") or {}).get("brightness_step_pct")
-        if not isinstance(step, (int, float)) or isinstance(step, bool) or not step:
-            return None
-        target = (action.get("target") or {}).get("entity_id")
-        if isinstance(target, list):
-            target = target[0] if len(target) == 1 else None
-        if not isinstance(target, str):
-            return None
-        entry = er.async_get(self._hass).async_get(target)
+        service, target, step = parsed
+        if service == "light.turn_on":
+            return target, step
+        if service == "light.turn_off":
+            return target, -abs(step)
+        if new_hold or key not in self._ramp_directions:
+            state = self._hass.states.get(target)
+            if state is None or state.state != "on":
+                direction = 1
+            else:
+                direction = -self._ramp_directions.get(key, 1)
+            self._ramp_directions[key] = direction
+        return target, abs(step) * self._ramp_directions[key]
+
+    def _z2m_set_topic(self, entity_id: str) -> str | None:
+        """Return a Zigbee2MQTT entity's device set topic, or None if it isn't one."""
+        entry = er.async_get(self._hass).async_get(entity_id)
         if entry is None or entry.platform != "mqtt":
             return None
         name = self._z2m_names.get(entry.unique_id.split("_", 1)[0])
         if name is None:
             return None
-        rate = max(1, round(abs(step) * 255 / 100))
-        payload = (
-            {"brightness_move_onoff": rate} if step > 0 else {"brightness_move": -rate}
-        )
-        return f"{self.mqtt_topic}/{name}/set", payload
+        return f"{self.mqtt_topic}/{name}/set"
 
     def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
         """Fire a button/paddle event on the event entity for a slot."""
@@ -1855,6 +1884,34 @@ _CLICK_COUNT_MAP: dict[int, str] = {
     2: "double_tap",
     3: "triple_tap",
 }
+
+
+def _parse_ramp_action(action: dict) -> tuple[str, str, float] | None:
+    """
+    Return (service, target light, % per second) if a hold action is a ramp.
+
+    A ramp is light.turn_on, light.turn_off or light.toggle aimed at one
+    light, with no data other than brightness_step_pct (the speed, default
+    HOLD_RAMP_PCT_PER_SECOND; its sign sets turn_on's direction) and
+    transition. Anything else is an ordinary action.
+    """
+    service = action.get("action")
+    target = (action.get("target") or {}).get("entity_id")
+    if isinstance(target, list) and len(target) == 1:
+        target = target[0]
+    data = action.get("data") or {}
+    step = data.get("brightness_step_pct", HOLD_RAMP_PCT_PER_SECOND)
+    if (
+        service not in ("light.turn_on", "light.turn_off", "light.toggle")
+        or not isinstance(target, str)
+        or not target.startswith("light.")
+        or set(data) - {"brightness_step_pct", "transition"}
+        or not isinstance(step, (int, float))
+        or isinstance(step, bool)
+        or not step
+    ):
+        return None
+    return service, target, step
 
 
 def _click_count_to_event_type(count: int) -> str:

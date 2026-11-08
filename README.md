@@ -242,20 +242,26 @@ Each button has a **Mode** (for dimmers/keypad-dimmers):
 
 #### Hold to dim another light
 
-A Programmable button's Hold action starts about 400 ms into a press. Set it to `light.turn_on` with `brightness_step_pct` to dim a light while the button is held:
+A Programmable button's Hold action starts about 400 ms into a press. Pointing it at a light dims that light for as long as the button is held, and this works straight from the card's Hold picker:
+
+| Hold action | While held |
+|---|---|
+| `light.turn_on` | brightens (turns the light on if it is off) |
+| `light.turn_off` | dims |
+| `light.toggle` | alternates: brightens an off light, otherwise reverses this button's last direction, starting with dim |
+
+The ramp runs at 15% per second. A `brightness_step_pct` in the action's data sets a different speed (and, for `light.turn_on`, a negative value dims):
 
 ```yaml
-# Top: hold to brighten
 hold_action:
   action: light.turn_on
   target:
     entity_id: light.living_room
   data:
-    brightness_step_pct: 15
-# Bottom: same, with brightness_step_pct: -15 to dim
+    brightness_step_pct: -25
 ```
 
-When the target is a single Zigbee2MQTT light, the hold sends one `brightness_move` at that many percent per second, and the release sends the stop. The light ramps itself, as smoothly as holding a native dimmer, and brightening turns an off light on. Any other Hold action (or a light that isn't on Zigbee2MQTT) runs again about once a second for as long as the button stays held.
+For a Zigbee2MQTT light, the hold sends one `brightness_move` and the release sends the stop, so the light ramps itself as smoothly as holding a native dimmer. Other lights step once a second instead. Any other Hold action (a script, a light action with other data such as `brightness`) runs again about once a second for as long as the button is held.
 
 A button with a Hold action runs its Tap action when a short press is released (about 100 ms after the press) instead of the moment it is pressed, so holding never runs the tap first. Buttons without a Hold action still act on press. The button's event entity fires `hold` once when the hold starts and `released` when it ends.
 
