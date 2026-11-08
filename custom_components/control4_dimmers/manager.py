@@ -13,6 +13,7 @@ from homeassistant.components import mqtt
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import callback as ha_callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -124,6 +125,12 @@ class Control4Manager:
         # Buttons currently held, so the "hold" event fires once per hold
         # even though the device repeats c4.dmx.hc about once a second.
         self._held: set[tuple[str, int]] = set()
+        # Holds ramping a Zigbee2MQTT light with brightness_move, mapped to
+        # the light's set topic so release can send the stop.
+        self._moving: dict[tuple[str, int], str] = {}
+        # Every Zigbee2MQTT device's friendly name by IEEE, from bridge/devices,
+        # so a hold can address a non-Control4 target light's topic.
+        self._z2m_names: dict[str, str] = {}
         # Per-device send pacing/serialization (issue #144). _send_locks
         # serializes individual publishes to one device and, together with
         # _next_send_at, spaces them >= MIN_SEND_INTERVAL apart. _push_locks
@@ -270,7 +277,7 @@ class Control4Manager:
             slot_id = int(press_match.group(1))
             is_scene = press_match.group(2) == "scene"
             if not is_scene:
-                self._held.discard((device.ieee_address, slot_id))
+                self._end_hold((device.ieee_address, slot_id))
             self.fire_button_event(device.ieee_address, slot_id, "pressed")
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
@@ -350,25 +357,82 @@ class Control4Manager:
         key = (device.ieee_address, slot_id)
         if hold_match.group(2):
             if key in self._held:
-                self._held.discard(key)
                 self.fire_button_event(device.ieee_address, slot_id, "released")
+            self._end_hold(key)
             return True
-        if key not in self._held:
+        new_hold = key not in self._held
+        if new_hold:
             self._held.add(key)
             self.fire_button_event(device.ieee_address, slot_id, "hold")
         config = self._store.get_device(device.ieee_address)
         slot = self._find_slot(config, slot_id) if config else None
         # A load button's own load is dimmed by the firmware while held.
         if (
-            slot is not None
-            and slot.hold_action
-            and slot.behavior not in ("load_on", "load_off", "toggle_load")
+            slot is None
+            or not slot.hold_action
+            or slot.behavior in ("load_on", "load_off", "toggle_load")
         ):
+            return True
+        move = self._smooth_dim_move(slot.hold_action)
+        if move is None:
             self._hass.async_create_task(
                 self.press_button(device.ieee_address, slot_id, "hold"),
                 f"c4_hold_{device.ieee_address}_{slot_id}",
             )
+        elif new_hold:
+            topic, payload = move
+            self._moving[key] = topic
+            self._hass.async_create_task(
+                mqtt.async_publish(self._hass, topic, json.dumps(payload), qos=1),
+                f"c4_hold_move_{device.ieee_address}_{slot_id}",
+            )
         return True
+
+    def _end_hold(self, key: tuple[str, int]) -> None:
+        """Forget a hold and stop its brightness_move ramp, if one is running."""
+        self._held.discard(key)
+        topic = self._moving.pop(key, None)
+        if topic is not None:
+            self._hass.async_create_task(
+                mqtt.async_publish(
+                    self._hass, topic, json.dumps({"brightness_move": 0}), qos=1
+                ),
+                f"c4_hold_stop_{key[0]}_{key[1]}",
+            )
+
+    def _smooth_dim_move(self, action: dict) -> tuple[str, dict[str, int]] | None:
+        """
+        Turn a brightness-step hold action into a Zigbee2MQTT ramp, if possible.
+
+        A hold action of light.turn_on with brightness_step_pct, aimed at one
+        Zigbee2MQTT light, becomes a brightness_move at that many percent per
+        second: the light ramps itself (smooth, like holding a native dimmer)
+        until the release sends the stop. Brightening uses
+        brightness_move_onoff so an off light turns on. Returns the light's
+        set topic and the start payload, or None to repeat the action
+        instead.
+        """
+        if action.get("action") != "light.turn_on":
+            return None
+        step = (action.get("data") or {}).get("brightness_step_pct")
+        if not isinstance(step, (int, float)) or isinstance(step, bool) or not step:
+            return None
+        target = (action.get("target") or {}).get("entity_id")
+        if isinstance(target, list):
+            target = target[0] if len(target) == 1 else None
+        if not isinstance(target, str):
+            return None
+        entry = er.async_get(self._hass).async_get(target)
+        if entry is None or entry.platform != "mqtt":
+            return None
+        name = self._z2m_names.get(entry.unique_id.split("_", 1)[0])
+        if name is None:
+            return None
+        rate = max(1, round(abs(step) * 255 / 100))
+        payload = (
+            {"brightness_move_onoff": rate} if step > 0 else {"brightness_move": -rate}
+        )
+        return f"{self.mqtt_topic}/{name}/set", payload
 
     def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
         """Fire a button/paddle event on the event entity for a slot."""
@@ -439,6 +503,8 @@ class Control4Manager:
         for device_info in payload:
             if not isinstance(device_info, dict):
                 continue
+            if z2m_ieee := device_info.get("ieee_address"):
+                self._z2m_names[z2m_ieee] = device_info.get("friendly_name", z2m_ieee)
             if not _is_control4_device(device_info):
                 continue
 

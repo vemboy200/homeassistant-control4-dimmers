@@ -242,7 +242,7 @@ Each button has a **Mode** (for dimmers/keypad-dimmers):
 
 #### Hold to dim another light
 
-A Programmable button's Hold action runs about 400 ms into a press and then about once a second for as long as the button stays held, so a brightness step with a matching transition ramps a light smoothly until you let go:
+A Programmable button's Hold action starts about 400 ms into a press. Set it to `light.turn_on` with `brightness_step_pct` to dim a light while the button is held:
 
 ```yaml
 # Top: hold to brighten
@@ -252,9 +252,10 @@ hold_action:
     entity_id: light.living_room
   data:
     brightness_step_pct: 15
-    transition: 1
 # Bottom: same, with brightness_step_pct: -15 to dim
 ```
+
+When the target is a single Zigbee2MQTT light, the hold sends one `brightness_move` at that many percent per second, and the release sends the stop. The light ramps itself, as smoothly as holding a native dimmer, and brightening turns an off light on. Any other Hold action (or a light that isn't on Zigbee2MQTT) runs again about once a second for as long as the button stays held.
 
 A button with a Hold action runs its Tap action when a short press is released (about 100 ms after the press) instead of the moment it is pressed, so holding never runs the tap first. Buttons without a Hold action still act on press. The button's event entity fires `hold` once when the hold starts and `released` when it ends.
 

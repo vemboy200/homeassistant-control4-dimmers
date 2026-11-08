@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,28 @@ HOLD = {
     "target": {"entity_id": "light.living"},
     "data": {"brightness_step_pct": 15, "transition": 1},
 }
+
+
+Z2M_LIGHT = "light.living"
+Z2M_IEEE = "0x000fff0000aaaaaa"
+
+
+@pytest.fixture(autouse=True)
+def entity_registry() -> Any:
+    """Patch the entity registry: light.living is a Zigbee2MQTT light."""
+    entries = {
+        Z2M_LIGHT: MagicMock(
+            platform="mqtt", unique_id=f"{Z2M_IEEE}_light_zigbee2mqtt"
+        ),
+        "light.wifi": MagicMock(platform="tuya_local", unique_id="abc"),
+    }
+    registry = MagicMock()
+    registry.async_get = MagicMock(side_effect=entries.get)
+    with patch(
+        "custom_components.control4_dimmers.manager.er.async_get",
+        return_value=registry,
+    ):
+        yield registry
 
 
 def _setup(
@@ -89,13 +111,22 @@ class TestHoldEvents:
         assert events == []
 
 
+REPEAT_HOLD = {
+    "action": "light.turn_on",
+    "target": {"entity_id": "light.wifi"},
+    "data": {"brightness_step_pct": 15, "transition": 1},
+}
+
+
 class TestHoldAction:
-    """hold_action runs on every hold repeat."""
+    """A hold_action that can't ramp a Z2M light runs on every hold repeat."""
 
     def test_hold_action_runs_each_repeat(
         self, manager: Control4Manager, keypad_state: DeviceState
     ) -> None:
-        press, _events = _setup(manager, keypad_state, tap_action=TAP, hold_action=HOLD)
+        press, _events = _setup(
+            manager, keypad_state, tap_action=TAP, hold_action=REPEAT_HOLD
+        )
         for action in (
             "button_2_press",
             "button_2_hold",
@@ -142,7 +173,9 @@ class TestTapWaitsForRelease:
         self, manager: Control4Manager, keypad_state: DeviceState
     ) -> None:
         # A hold sends hc instead of sc, so the tap action never runs.
-        press, _events = _setup(manager, keypad_state, tap_action=TAP, hold_action=HOLD)
+        press, _events = _setup(
+            manager, keypad_state, tap_action=TAP, hold_action=REPEAT_HOLD
+        )
         for action in ("button_2_press", "button_2_hold", "button_2_hold_release"):
             manager._dispatch_button_action(keypad_state, action)
         assert _triggers(press) == ["hold"]
@@ -188,4 +221,105 @@ class TestHoldRunsTheHoldAction:
             "light",
             "turn_on",
             {"brightness_step_pct": 15, "transition": 1, "entity_id": "light.living"},
+        )
+
+
+class TestSmoothDim:
+    """A brightness-step hold on a Zigbee2MQTT light ramps with brightness_move."""
+
+    def _run(
+        self,
+        manager: Control4Manager,
+        keypad_state: DeviceState,
+        actions: tuple[str, ...],
+        hold: dict = HOLD,
+    ) -> tuple[MagicMock, MagicMock]:
+        press, _events = _setup(manager, keypad_state, tap_action=TAP, hold_action=hold)
+        manager._z2m_names[Z2M_IEEE] = "Living Light"
+        publish = MagicMock(return_value=None)
+        with patch(
+            "custom_components.control4_dimmers.manager.mqtt.async_publish", publish
+        ):
+            for action in actions:
+                manager._dispatch_button_action(keypad_state, action)
+        return press, publish
+
+    def _payloads(self, publish: MagicMock) -> list[tuple[str, dict]]:
+        import json  # noqa: PLC0415
+
+        return [(c.args[1], json.loads(c.args[2])) for c in publish.call_args_list]
+
+    def test_hold_starts_one_move_and_release_stops(
+        self, manager: Control4Manager, keypad_state: DeviceState
+    ) -> None:
+        press, publish = self._run(
+            manager,
+            keypad_state,
+            (
+                "button_2_press",
+                "button_2_hold",
+                "button_2_hold",
+                "button_2_hold",
+                "button_2_hold_release",
+            ),
+        )
+        topic = "zigbee2mqtt/Living Light/set"
+        assert self._payloads(publish) == [
+            (topic, {"brightness_move_onoff": 38}),
+            (topic, {"brightness_move": 0}),
+        ]
+        press.assert_not_called()
+
+    def test_negative_step_dims_without_onoff(
+        self, manager: Control4Manager, keypad_state: DeviceState
+    ) -> None:
+        down = {**HOLD, "data": {"brightness_step_pct": -20}}
+        _press, publish = self._run(
+            manager, keypad_state, ("button_2_press", "button_2_hold"), hold=down
+        )
+        assert self._payloads(publish) == [
+            ("zigbee2mqtt/Living Light/set", {"brightness_move": -51}),
+        ]
+
+    def test_new_press_stops_a_lost_release(
+        self, manager: Control4Manager, keypad_state: DeviceState
+    ) -> None:
+        # If the he frame is lost, the next press still stops the ramp.
+        _press, publish = self._run(
+            manager, keypad_state, ("button_2_press", "button_2_hold", "button_2_press")
+        )
+        assert self._payloads(publish)[-1] == (
+            "zigbee2mqtt/Living Light/set",
+            {"brightness_move": 0},
+        )
+
+    def test_unknown_z2m_device_falls_back_to_repeat(
+        self, manager: Control4Manager, keypad_state: DeviceState
+    ) -> None:
+        press, _events = _setup(manager, keypad_state, tap_action=TAP, hold_action=HOLD)
+        # No bridge/devices entry for the light's IEEE.
+        manager._dispatch_button_action(keypad_state, "button_2_hold")
+        assert _triggers(press) == ["hold"]
+
+    @pytest.mark.parametrize(
+        "action",
+        [
+            {**HOLD, "action": "light.toggle"},
+            {**HOLD, "data": {"brightness_step": 20}},
+            {**HOLD, "data": {"brightness_step_pct": 0}},
+            {**HOLD, "target": {"entity_id": [Z2M_LIGHT, "light.other"]}},
+        ],
+    )
+    def test_other_actions_are_not_moves(
+        self, manager: Control4Manager, action: dict
+    ) -> None:
+        manager._z2m_names[Z2M_IEEE] = "Living Light"
+        assert manager._smooth_dim_move(action) is None
+
+    def test_single_item_target_list_is_a_move(self, manager: Control4Manager) -> None:
+        manager._z2m_names[Z2M_IEEE] = "Living Light"
+        action = {**HOLD, "target": {"entity_id": [Z2M_LIGHT]}}
+        assert manager._smooth_dim_move(action) == (
+            "zigbee2mqtt/Living Light/set",
+            {"brightness_move_onoff": 38},
         )
