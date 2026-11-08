@@ -121,6 +121,9 @@ class Control4Manager:
         self._led_cooldowns: dict[
             tuple[str, int], float
         ] = {}  # (ieee, slot) -> timestamp
+        # Buttons currently held, so the "hold" event fires once per hold
+        # even though the device repeats c4.dmx.hc about once a second.
+        self._held: set[tuple[str, int]] = set()
         # Per-device send pacing/serialization (issue #144). _send_locks
         # serializes individual publishes to one device and, together with
         # _next_send_at, spaces them >= MIN_SEND_INTERVAL apart. _push_locks
@@ -256,7 +259,9 @@ class Control4Manager:
         if not action_str:
             return
 
-        if self._dispatch_paddle_action(device, action_str):
+        if self._dispatch_paddle_action(
+            device, action_str
+        ) or self._dispatch_hold_action(device, action_str):
             return
 
         # Press or scene: button_N_press (c4.dmx.bp), button_N_scene (c4.dmx.sc)
@@ -264,6 +269,8 @@ class Control4Manager:
         if press_match:
             slot_id = int(press_match.group(1))
             is_scene = press_match.group(2) == "scene"
+            if not is_scene:
+                self._held.discard((device.ieee_address, slot_id))
             self.fire_button_event(device.ieee_address, slot_id, "pressed")
             config = self._store.get_device(device.ieee_address)
             slot = self._find_slot(config, slot_id) if config else None
@@ -273,9 +280,13 @@ class Control4Manager:
             # matching firmware modes (00=on, 01=off, 02=toggle).
             # Press on programmable: execute tap_action immediately
             # (unless double_tap configured — handled by click_count).
+            # With a hold_action, the tap waits for the scene frame instead:
+            # the device sends sc when a short press is released (~100 ms)
+            # and never sends it for a hold, so a hold does not tap first.
             is_load = behavior in ("load_on", "load_off", "toggle_load")
+            waits_for_release = bool(slot and slot.hold_action)
             should_act = (is_scene and is_load) or (
-                not is_scene
+                is_scene == waits_for_release
                 and not is_load
                 and (not slot or not slot.double_tap_action)
             )
@@ -319,6 +330,45 @@ class Control4Manager:
                     f"c4_action_{device.ieee_address}_{slot_id}",
                 )
             return
+
+    def _dispatch_hold_action(self, device: DeviceState, action_str: str) -> bool:
+        """
+        Handle button_N_hold / button_N_hold_release (c4.dmx.hc / c4.dmx.he).
+
+        Returns True if the action was a hold frame. The device sends
+        c4.dmx.hc about 400 ms into a press and repeats it about once a
+        second while the button stays down, then c4.dmx.he on
+        release. The "hold" event fires once per hold and "released" fires
+        on release. A programmable button's hold_action runs on every
+        repeat, so a brightness step with a transition ramps a light for
+        as long as the button is held.
+        """
+        hold_match = re.match(r"button_(\d+)_hold(_release)?$", action_str)
+        if not hold_match:
+            return False
+        slot_id = int(hold_match.group(1))
+        key = (device.ieee_address, slot_id)
+        if hold_match.group(2):
+            if key in self._held:
+                self._held.discard(key)
+                self.fire_button_event(device.ieee_address, slot_id, "released")
+            return True
+        if key not in self._held:
+            self._held.add(key)
+            self.fire_button_event(device.ieee_address, slot_id, "hold")
+        config = self._store.get_device(device.ieee_address)
+        slot = self._find_slot(config, slot_id) if config else None
+        # A load button's own load is dimmed by the firmware while held.
+        if (
+            slot is not None
+            and slot.hold_action
+            and slot.behavior not in ("load_on", "load_off", "toggle_load")
+        ):
+            self._hass.async_create_task(
+                self.press_button(device.ieee_address, slot_id, "hold"),
+                f"c4_hold_{device.ieee_address}_{slot_id}",
+            )
+        return True
 
     def fire_button_event(self, ieee: str, slot_id: int | str, event_type: str) -> None:
         """Fire a button/paddle event on the event entity for a slot."""

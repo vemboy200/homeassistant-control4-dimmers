@@ -129,4 +129,5 @@ BUTTON_EVENT_TYPES: Final[list[str]] = [
     "single_tap",
     "double_tap",
     "triple_tap",
+    "hold",
 ]

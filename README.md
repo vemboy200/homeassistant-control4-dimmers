@@ -20,7 +20,7 @@ Pairs with a Zigbee2MQTT stack that speaks the Control4 protocol natively
 - Control C4 dimmers and keypads through Home Assistant using standard Zigbee.
 - Configure buttons with a visual chassis editor in a custom Lovelace card.
 - Set per-button LED colors with a native HA color picker (on-state and off-state independently).
-- Trigger automations from physical button events (`pressed`, `released`, `single_tap`, `double_tap`, `triple_tap`) exposed as HA event entities.
+- Trigger automations from physical button events (`pressed`, `released`, `single_tap`, `double_tap`, `triple_tap`, `hold`) exposed as HA event entities.
 - Auto-detect device type (dimmer, keypad dimmer, or pure keypad) at pairing time.
 - Read stored LED colors from device firmware so dimmers retain their existing C4 colors.
 - Send raw C4 text protocol commands for experimentation and debugging.
@@ -239,6 +239,24 @@ Each button has a **Mode** (for dimmers/keypad-dimmers):
 - **Programmable** — button fires an HA event entity. You can
   configure actions for Tap, Double Tap, and Hold using HA's
   `ha-service-picker` (any HA service + target entity).
+
+#### Hold to dim another light
+
+A Programmable button's Hold action runs about 400 ms into a press and then about once a second for as long as the button stays held, so a brightness step with a matching transition ramps a light smoothly until you let go:
+
+```yaml
+# Top: hold to brighten
+hold_action:
+  action: light.turn_on
+  target:
+    entity_id: light.living_room
+  data:
+    brightness_step_pct: 15
+    transition: 1
+# Bottom: same, with brightness_step_pct: -15 to dim
+```
+
+A button with a Hold action runs its Tap action when a short press is released (about 100 ms after the press) instead of the moment it is pressed, so holding never runs the tap first. Buttons without a Hold action still act on press. The button's event entity fires `hold` once when the hold starts and `released` when it ends.
 
 #### LED modes (for Programmable buttons)
 

@@ -131,7 +131,7 @@ HA Device: "Kitchen Dimmer"
 │     brightness: 0–255
 │
 ├── event.kitchen_dimmer_button_2         # button (Top, wire 01)
-│     event_type: pressed | released | single_tap | double_tap | triple_tap
+│     event_type: pressed | released | single_tap | double_tap | triple_tap | hold
 │     attributes:
 │       on_color: "#ffffff"
 │       off_color: "#000000"
