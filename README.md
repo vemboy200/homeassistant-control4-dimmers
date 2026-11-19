@@ -173,6 +173,31 @@ The LEDs flash to confirm, then blink orange/yellow while searching.
 > flashing lights out of the room (or covering the fixture) while you
 > pair.
 
+#### Button sequences for other devices
+
+The steps above are for the wall switches. Control4's installation and setup guides list the sequences for other devices below. Taps are quick, short presses. A sequence like 13-4-13 means 13 taps on the top (or only) button, 4 on the bottom, then 13 on the top again. "Leave mesh and reset" frees a device from its old Control4 network; 4 taps (identify) then makes it search for an open network.
+
+<details><summary>Show table</summary>
+
+| Devices | Identify / join | Factory reset | Leave mesh and reset | Source |
+| ------- | ------- | ------- | ------- | ------- |
+| Wall dimmers, switches and keypads (APD, FPD, KD, KC, SW, 0-10V) | Top button 4 | 9-4-9 | 13-4-13 | Installation guides ([APD](https://docs.control4.com/docs/product/wireless-adaptive-phase-dimmer/installation-guide-120v277v/english/latest), [KD](https://docs.control4.com/docs/product/wireless-keypad-dimmer/installation-guide-120v277v/english/latest), [SW](https://docs.control4.com/docs/product/wireless-switch-120v-277v/installation-guide/english/latest), [0-10V](https://docs.control4.com/docs/product/wireless-0-10v-dimmer/installation-guide-120v277v/english/latest)). On keypads, use the top-most and bottom-most buttons. Also: 7 taps shows the Zigbee channel, 15 reboots. Contemporary versions are expected to match |
+| Essential Forward Phase Dimmer (C4-V-FPD120) | Top of rocker 4 | Not listed | 13-4-13 | [Installation guide](https://docs.control4.com/docs/product/essential-forward-phase-dimmer-120v-white/dealer-installation-guide/english/latest) |
+| Lux | Top button 4 | 9-4-9 | 13-4-13 | Installation guides ([keypad](https://help.snapone.com/lux-qs/Content/LuxConfigurableKeypadInstallationGuide.pdf), [fan controller](https://help.snapone.com/lux-qs/Content/LuxVariableSpeedControllerInstallationGuide.pdf)). Zigbee channel is 7-4-7 instead of 7 |
+| Puck Dimmer and Switch | ID button 4 | ID button 9 | ID button 13 | [Installation guide](https://docs.control4.com/docs/product/puck-dimmer/dealer-installation-guide/english/latest). From a switch wired to auxiliary contact 1: 4, 22 and 30 taps; across contacts 1 and 2: 9-4-9 and 13-4-13 |
+| Receptacle Outlet Switch (C4-V-ROSW120) | Button 4 | Not listed | Button 13 | [Installation guide](https://docs.control4.com/docs/product/receptacle-outlet-switch/dealer-installation-guide/english/latest) |
+| Plug-in and outdoor outlets (C4-V-ODIM120, C4-V-OSW120, C4-V-OOSW120) | Program button 4 | Program button 9 (plug-ins) | Program button 13 | Installation guides ([plug-in dimmer](https://docs.control4.com/docs/product/plug-in-outlet-dimmer/dealer-installation-guide/english/latest), [plug-in switch](https://docs.control4.com/docs/product/plug-in-outlet-switch/dealer-installation-guide/english/latest), [outdoor](https://docs.control4.com/docs/product/outdoor-plug-in-outlet-switch/dealer-installation-guide/english/latest)) |
+| Thermostat by Aprilaire (C4-THERM) | Top-right button 4 | 9-4-9 | 13-4-13 | [Installation guide](https://docs.control4.com/docs/product/control4-wireless-thermostat-by-aprilaire/installation-guide/english/latest). Two-button sequences use the top-right and bottom-right buttons. HVAC settings survive the reset |
+| Wireless Thermostat (CCZ-T1-W) | Not listed | Not listed | Not listed | [Installation guide](https://docs.control4.com/docs/product/wireless-thermostat-v2/installation-guide/english/latest) only gives reboot: left button 9, middle 4, left 9 |
+| SR-150 remote | Not listed | Room Off, #, \*, 1, 3, 4, 1, 3 (also leaves the mesh) | Same | [Setup guide](https://docs.control4.com/docs/product/system-remote-control-sr-150/setup-guide/english/latest) |
+| SR-250 remote | Red 4 button 4 times | Room Off, #, \*, 1, 3, 4, 1, 3 (forum report) | Same | [Setup guide](https://docs.control4.com/docs/product/system-remote-control-sr-250/setup-guide/english/latest) for identify |
+| SR-260 remote | Not listed | LIST > Settings > Config > Factory Defaults | Room Off, #, \*, 1, 3, 4, 1, 3 (forum report) | [Setup guide](https://docs.control4.com/docs/product/system-remote-control-sr-260/dealer-installation-and-setup-guide/english/latest) for the menu |
+| Zigbee Contact Sensor (C4-Z2C) | ID button 4 | Not listed | ID button 13 | [Installation guide](https://docs.control4.com/docs/product/z2c/dealer-installation-guide/english/latest) |
+| Card Access sensors and relay (ZCA-*) | Button 4 | Not listed | Not listed | Installation guides ([motion sensor](https://docs.control4.com/docs/product/wireless-motion-sensor/dealer-installation-guide/english/latest), [contact relay](https://docs.control4.com/docs/product/wireless-contact-relay/dealer-installation-guide/english/latest)) |
+| Legacy (C4-DIM1-Z and others) | Not listed | Not listed | 13-4-13 (one forum report) | No guide found |
+
+</details>
+
 ### Step 3: Pair with Zigbee2MQTT
 
 1. The device should appear in Z2M within 30 seconds of the reset taps.
